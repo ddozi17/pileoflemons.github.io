@@ -1020,6 +1020,7 @@
   <span id="title-text">&#9670; World Map</span>
   <div class="toolbar-sep"></div>
   <button id="btn-load-img" title="Load your map image">Load Map</button>
+  <button id="btn-load-sample" title="Load the sample project" style="background:#2a2010;border-color:#8a6a3a;color:#c8aa70;">✦ Load Sample</button>
   <div class="toolbar-sep"></div>
   <div style="position:relative;">
     <button id="btn-layers" title="Manage map image layers">&#9635; Layers</button>
@@ -2633,6 +2634,27 @@
 
   // File input
   const fileInputImg = document.getElementById('file-input-img');
+  // ── Load sample project from GitHub ─────────────────────────────────────
+  const SAMPLE_URL = 'https://raw.githubusercontent.com/ddozi17/pileoflemons.github.io/main/sample-project.json';
+
+  document.getElementById('btn-load-sample').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-load-sample');
+    btn.textContent = '⏳ Loading…';
+    btn.disabled = true;
+    try {
+      const resp = await fetch(SAMPLE_URL);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const proj = await resp.json();
+      loadProjectData(migrateProject(proj));
+      btn.textContent = '✦ Sample loaded!';
+      setTimeout(() => { btn.textContent = '✦ Load Sample'; btn.disabled = false; }, 2000);
+    } catch (err) {
+      alert('Could not load sample project.\n\nMake sure sample-project.json exists at the repo root.\n\n(' + err.message + ')');
+      btn.textContent = '✦ Load Sample';
+      btn.disabled = false;
+    }
+  });
+
   document.getElementById('btn-load-img').addEventListener('click', () => fileInputImg.click());
   document.getElementById('btn-browse').addEventListener('click', () => fileInputImg.click());
   fileInputImg.addEventListener('change', (e) => {
