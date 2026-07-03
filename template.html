@@ -1,0 +1,370 @@
+// Fantasy Map Editor — Relationship Graph
+// Force-directed graph overlay.
+
+  // ── Relationship Graph ───────────────────────────────────────────────────────
+  const graphOverlay  = document.getElementById('graph-overlay');
+  const graphCanvas   = document.getElementById('graph-canvas');
+  const graphCtx      = graphCanvas.getContext('2d');
+  let graphOpen       = false;
+  let graphNodes      = []; // {id, pin, x, y, vx, vy, r, color}
+  let graphEdges      = []; // {a, b, label}
+  let graphDragging   = null;
+  let graphPanX = 0, graphPanY = 0;
+  let graphScale = 1;
+  let graphPanning = false, graphPanStart = null;
+  let graphSearchStr  = '';
+  let graphAnimId     = null;
+  let graphRepulsion  = 2500;
+  let graphLinkDist   = 120;
+  let graphSettled    = false;
+  let graphTickCount  = 0;
+
+  document.getElementById('btn-graph').addEventListener('click', openGraph);
+  document.getElementById('graph-close').addEventListener('click', closeGraph);
+
+  document.getElementById('graph-repulsion').addEventListener('input', (e) => {
+    graphRepulsion = +e.target.value; graphSettled = false; graphTickCount = 0;
+  });
+  document.getElementById('graph-linkdist').addEventListener('input', (e) => {
+    graphLinkDist = +e.target.value; graphSettled = false; graphTickCount = 0;
+  });
+  document.getElementById('graph-reset-layout').addEventListener('click', () => {
+    initGraphLayout(); graphSettled = false; graphTickCount = 0;
+  });
+  document.getElementById('graph-fit').addEventListener('click', graphFitView);
+  document.getElementById('graph-search').addEventListener('input', (e) => {
+    graphSearchStr = e.target.value.toLowerCase().trim();
+    drawGraph();
+  });
+
+  function openGraph() {
+    if (!pins.length) { alert('No pins to graph yet.'); return; }
+    graphOpen = true;
+    graphOverlay.classList.add('visible');
+    buildGraphData();
+    resizeGraphCanvas();
+    initGraphLayout();
+    graphSettled = false;
+    graphTickCount = 0;
+    startGraphLoop();
+    buildGraphLegend();
+  }
+
+  function closeGraph() {
+    graphOpen = false;
+    graphOverlay.classList.remove('visible');
+    if (graphAnimId) { cancelAnimationFrame(graphAnimId); graphAnimId = null; }
+  }
+
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && graphOpen) closeGraph();
+  });
+
+  function buildGraphData() {
+    // Count connections per pin for sizing
+    const degree = {};
+    pins.forEach(p => degree[p.id] = 0);
+    links.forEach(l => {
+      if (degree[l.fromId] !== undefined) degree[l.fromId]++;
+      if (degree[l.toId]   !== undefined) degree[l.toId]++;
+    });
+
+    graphNodes = pins.map(pin => ({
+      id: pin.id, pin,
+      x: 0, y: 0, vx: 0, vy: 0,
+      r: 8 + Math.min(degree[pin.id] || 0, 8) * 2.5,
+      color: PIN_COLORS[pin.type] || '#c8aa70',
+    }));
+
+    const nodeMap = {};
+    graphNodes.forEach(n => nodeMap[n.id] = n);
+
+    graphEdges = links
+      .filter(l => nodeMap[l.fromId] && nodeMap[l.toId])
+      .map(l => ({ a: nodeMap[l.fromId], b: nodeMap[l.toId], label: l.label || null }));
+  }
+
+  function initGraphLayout() {
+    const W = graphCanvas.width, H = graphCanvas.height;
+    const cx = W / 2, cy = H / 2;
+
+    // Connected nodes start in a ring, isolated nodes in outer ring
+    const connectedIds = new Set();
+    graphEdges.forEach(e => { connectedIds.add(e.a.id); connectedIds.add(e.b.id); });
+
+    const connected   = graphNodes.filter(n => connectedIds.has(n.id));
+    const isolated    = graphNodes.filter(n => !connectedIds.has(n.id));
+
+    const innerR = Math.min(W, H) * 0.28;
+    const outerR = Math.min(W, H) * 0.44;
+
+    connected.forEach((n, i) => {
+      const a = (i / connected.length) * Math.PI * 2 - Math.PI / 2;
+      n.x = cx + innerR * Math.cos(a) + (Math.random() - 0.5) * 40;
+      n.y = cy + innerR * Math.sin(a) + (Math.random() - 0.5) * 40;
+      n.vx = 0; n.vy = 0;
+    });
+
+    isolated.forEach((n, i) => {
+      const a = (i / Math.max(isolated.length, 1)) * Math.PI * 2 - Math.PI / 2;
+      n.x = cx + outerR * Math.cos(a);
+      n.y = cy + outerR * Math.sin(a);
+      n.vx = 0; n.vy = 0;
+    });
+
+    // Reset pan/zoom
+    graphPanX = 0; graphPanY = 0; graphScale = 1;
+  }
+
+  function resizeGraphCanvas() {
+    graphCanvas.width  = graphCanvas.clientWidth;
+    graphCanvas.height = graphCanvas.clientHeight;
+  }
+
+  function startGraphLoop() {
+    if (graphAnimId) cancelAnimationFrame(graphAnimId);
+    function tick() {
+      if (!graphOpen) return;
+      if (!graphSettled) {
+        physicsStep();
+        graphTickCount++;
+        if (graphTickCount > 300) graphSettled = true;
+      }
+      drawGraph();
+      graphAnimId = requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
+  function physicsStep() {
+    const nodes = graphNodes;
+    const damping = 0.82;
+    const dt = 0.55;
+
+    // Repulsion between all node pairs
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx*dx + dy*dy) || 0.1;
+        const force = graphRepulsion / (dist * dist);
+        const fx = (dx / dist) * force, fy = (dy / dist) * force;
+        a.vx -= fx * dt; a.vy -= fy * dt;
+        b.vx += fx * dt; b.vy += fy * dt;
+      }
+    }
+
+    // Attraction along edges
+    graphEdges.forEach(e => {
+      const { a, b } = e;
+      let dx = b.x - a.x, dy = b.y - a.y;
+      const dist = Math.sqrt(dx*dx + dy*dy) || 0.1;
+      const force = (dist - graphLinkDist) * 0.04;
+      const fx = (dx / dist) * force, fy = (dy / dist) * force;
+      a.vx += fx; a.vy += fy;
+      b.vx -= fx; b.vy -= fy;
+    });
+
+    // Gravity toward center
+    const W = graphCanvas.width / 2, H = graphCanvas.height / 2;
+    nodes.forEach(n => {
+      n.vx += (W - n.x) * 0.004;
+      n.vy += (H - n.y) * 0.004;
+    });
+
+    // Apply velocity
+    nodes.forEach(n => {
+      if (graphDragging === n) return;
+      n.vx *= damping; n.vy *= damping;
+      n.x += n.vx * dt; n.y += n.vy * dt;
+    });
+  }
+
+  function drawGraph() {
+    const W = graphCanvas.width, H = graphCanvas.height;
+    graphCtx.clearRect(0, 0, W, H);
+
+    graphCtx.save();
+    graphCtx.translate(graphPanX, graphPanY);
+    graphCtx.scale(graphScale, graphScale);
+
+    const q = graphSearchStr;
+
+    // Draw edges
+    graphEdges.forEach(e => {
+      const { a, b, label } = e;
+      const aMatch = !q || a.pin.name.toLowerCase().includes(q);
+      const bMatch = !q || b.pin.name.toLowerCase().includes(q);
+      const highlight = !q || aMatch || bMatch;
+      graphCtx.beginPath();
+      graphCtx.moveTo(a.x, a.y);
+      graphCtx.lineTo(b.x, b.y);
+      graphCtx.strokeStyle = highlight ? '#5a4a2a' : '#2a2010';
+      graphCtx.lineWidth = highlight ? 1.5 / graphScale : 1 / graphScale;
+      graphCtx.stroke();
+      // Edge label
+      if (label) {
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        graphCtx.font = `${10/graphScale}px serif`;
+        graphCtx.fillStyle = highlight ? '#8a7a5a' : '#4a3a28';
+        graphCtx.textAlign = 'center'; graphCtx.textBaseline = 'middle';
+        graphCtx.fillText(label, mx, my - 6 / graphScale);
+      }
+    });
+
+    // Draw nodes
+    graphNodes.forEach(n => {
+      const match = !q || n.pin.name.toLowerCase().includes(q) ||
+                    (n.pin.desc||'').toLowerCase().includes(q) ||
+                    (n.pin.tags||[]).join(' ').toLowerCase().includes(q);
+      const dim = q && !match;
+
+      graphCtx.globalAlpha = dim ? 0.18 : 1;
+
+      // Node circle
+      graphCtx.beginPath();
+      graphCtx.arc(n.x, n.y, n.r / graphScale, 0, Math.PI * 2);
+      graphCtx.fillStyle = n.color;
+      graphCtx.fill();
+      if (match && q) {
+        graphCtx.strokeStyle = '#e8c060';
+        graphCtx.lineWidth = 2.5 / graphScale;
+        graphCtx.stroke();
+      }
+
+      // Category ring
+      const c2 = PIN_COLORS2[n.pin.type] || 'rgba(255,255,255,0.25)';
+      graphCtx.beginPath();
+      graphCtx.arc(n.x, n.y, (n.r - 4) / graphScale, 0, Math.PI * 2);
+      graphCtx.fillStyle = c2;
+      graphCtx.fill();
+
+      // Label
+      const fontSize = Math.max(9, Math.min(13, 11 / graphScale));
+      graphCtx.font = `${fontSize}px "Palatino Linotype", serif`;
+      graphCtx.fillStyle = dim ? '#3a3028' : '#e8dfc8';
+      graphCtx.textAlign = 'center';
+      graphCtx.textBaseline = 'top';
+      graphCtx.fillText(n.pin.name || '(unnamed)', n.x, n.y + n.r / graphScale + 3 / graphScale);
+
+      graphCtx.globalAlpha = 1;
+    });
+
+    graphCtx.restore();
+
+    // Stats
+    document.getElementById('graph-stats').textContent =
+      `${graphNodes.length} nodes · ${graphEdges.length} links`;
+  }
+
+  function graphFitView() {
+    if (!graphNodes.length) return;
+    const xs = graphNodes.map(n => n.x), ys = graphNodes.map(n => n.y);
+    const minX = Math.min(...xs) - 40, maxX = Math.max(...xs) + 40;
+    const minY = Math.min(...ys) - 40, maxY = Math.max(...ys) + 40;
+    const W = graphCanvas.width, H = graphCanvas.height;
+    graphScale = Math.min(3, Math.min(W / (maxX - minX), H / (maxY - minY)));
+    graphPanX = W / 2 - ((minX + maxX) / 2) * graphScale;
+    graphPanY = H / 2 - ((minY + maxY) / 2) * graphScale;
+    drawGraph();
+  }
+
+  function buildGraphLegend() {
+    const leg = document.getElementById('graph-legend');
+    leg.innerHTML = '';
+    const types = [...new Set(pins.map(p => p.type))];
+    types.forEach(t => {
+      const div = document.createElement('div');
+      div.className = 'graph-legend-item';
+      const dot = document.createElement('span');
+      dot.className = 'graph-legend-dot';
+      dot.style.background = PIN_COLORS[t] || '#888';
+      const lbl = document.createElement('span');
+      lbl.textContent = keyToLabel(t);
+      div.append(dot, lbl);
+      leg.appendChild(div);
+    });
+    const stats = document.createElement('span');
+    stats.id = 'graph-stats';
+    leg.appendChild(stats);
+  }
+
+  // ── Graph interaction ─────────────────────────────────────────────────────
+  function graphScreenToWorld(cx, cy) {
+    return {
+      x: (cx - graphPanX) / graphScale,
+      y: (cy - graphPanY) / graphScale,
+    };
+  }
+
+  function graphNodeAt(wx, wy) {
+    return graphNodes.find(n => Math.hypot(n.x - wx, n.y - wy) <= n.r / graphScale + 4);
+  }
+
+  graphCanvas.addEventListener('mousedown', (e) => {
+    const rect = graphCanvas.getBoundingClientRect();
+    const { x, y } = graphScreenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const hit = graphNodeAt(x, y);
+    if (hit) {
+      graphDragging = hit;
+      graphCanvas.classList.add('dragging');
+    } else {
+      graphPanning = true;
+      graphPanStart = { x: e.clientX - graphPanX, y: e.clientY - graphPanY };
+      graphCanvas.classList.add('dragging');
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!graphOpen) return;
+    if (graphDragging) {
+      const rect = graphCanvas.getBoundingClientRect();
+      const { x, y } = graphScreenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      graphDragging.x = x; graphDragging.y = y;
+      graphDragging.vx = 0; graphDragging.vy = 0;
+    } else if (graphPanning && graphPanStart) {
+      graphPanX = e.clientX - graphPanStart.x;
+      graphPanY = e.clientY - graphPanStart.y;
+      drawGraph();
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!graphOpen) return;
+    graphDragging = null;
+    graphPanning = false;
+    graphPanStart = null;
+    graphCanvas.classList.remove('dragging');
+  });
+
+  graphCanvas.addEventListener('click', (e) => {
+    const rect = graphCanvas.getBoundingClientRect();
+    const { x, y } = graphScreenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const hit = graphNodeAt(x, y);
+    if (hit) {
+      closeGraph();
+      // Jump map to pin and open reader
+      zoomToPin(hit.pin, Math.max(scale, 1.2), () => openReader(hit.pin));
+      setMode('read');
+    }
+  });
+
+  graphCanvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = graphCanvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const delta = e.deltaY < 0 ? 1.12 : 0.89;
+    const newScale = Math.max(0.1, Math.min(6, graphScale * delta));
+    graphPanX = mx - (mx - graphPanX) * (newScale / graphScale);
+    graphPanY = my - (my - graphPanY) * (newScale / graphScale);
+    graphScale = newScale;
+    drawGraph();
+  }, { passive: false });
+
+  window.addEventListener('resize', () => {
+    if (!graphOpen) return;
+    resizeGraphCanvas();
+    drawGraph();
+  });
+

@@ -1,0 +1,106 @@
+// Fantasy Map Editor — Fog of War
+// Canvas-based fog overlay, paint/erase tools.
+
+  // ── Fog of War ────────────────────────────────────────────────────────────
+  const fogCanvas  = document.getElementById('fog-canvas');
+  const fogCtx     = fogCanvas.getContext('2d');
+  let fogVisible   = false;
+  let fogMode      = 'erase'; // 'erase' = reveal, 'paint' = hide
+  let fogBrush     = 60;
+  let fogPainting  = false;
+  let fogInitialised = false;
+
+  function initFog() {
+    if (!mapLoaded) return;
+    const w = parseInt(layerStack.style.width)  || 800;
+    const h = parseInt(layerStack.style.height) || 600;
+    fogCanvas.width  = w;
+    fogCanvas.height = h;
+    fogCanvas.style.width  = w + 'px';
+    fogCanvas.style.height = h + 'px';
+    if (!fogInitialised) {
+      // Start fully hidden
+      fogCtx.fillStyle = 'rgba(10,8,5,1)';
+      fogCtx.fillRect(0, 0, w, h);
+      fogInitialised = true;
+    }
+  }
+
+  function fogPaint(imgX, imgY, erase) {
+    fogCtx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+    const grad = fogCtx.createRadialGradient(imgX, imgY, 0, imgX, imgY, fogBrush / scale);
+    if (erase) {
+      grad.addColorStop(0, 'rgba(0,0,0,1)');
+      grad.addColorStop(0.7, 'rgba(0,0,0,0.8)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+    } else {
+      grad.addColorStop(0, 'rgba(10,8,5,1)');
+      grad.addColorStop(0.7, 'rgba(10,8,5,0.8)');
+      grad.addColorStop(1, 'rgba(10,8,5,0)');
+    }
+    fogCtx.fillStyle = grad;
+    fogCtx.beginPath();
+    fogCtx.arc(imgX, imgY, fogBrush / scale, 0, Math.PI * 2);
+    fogCtx.fill();
+    fogCtx.globalCompositeOperation = 'source-over';
+  }
+
+  document.getElementById('btn-fog-toggle').addEventListener('click', () => {
+    fogVisible = !fogVisible;
+    document.getElementById('btn-fog-toggle').classList.toggle('active', fogVisible);
+    document.getElementById('fog-toolbar').classList.toggle('visible', fogVisible);
+    fogCanvas.style.display = fogVisible ? 'block' : 'none';
+    if (fogVisible) {
+      initFog();
+      setMode(fogMode === 'erase' ? 'fog-erase' : 'fog-paint');
+    } else {
+      setMode('pin');
+    }
+  });
+
+  document.getElementById('fog-paint-btn').addEventListener('click', () => {
+    fogMode = 'paint';
+    document.getElementById('fog-paint-btn').classList.add('active-shape');
+    document.getElementById('fog-erase-btn').classList.remove('active-shape');
+    setMode('fog-paint');
+  });
+  document.getElementById('fog-erase-btn').addEventListener('click', () => {
+    fogMode = 'erase';
+    document.getElementById('fog-erase-btn').classList.add('active-shape');
+    document.getElementById('fog-paint-btn').classList.remove('active-shape');
+    setMode('fog-erase');
+  });
+  document.getElementById('fog-brush-size').addEventListener('input', (e) => { fogBrush = +e.target.value; });
+  document.getElementById('fog-reveal-all').addEventListener('click', () => {
+    initFog();
+    fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+  });
+  document.getElementById('fog-hide-all').addEventListener('click', () => {
+    initFog();
+    fogCtx.fillStyle = 'rgba(10,8,5,1)';
+    fogCtx.fillRect(0, 0, fogCanvas.width, fogCanvas.height);
+    fogInitialised = true;
+  });
+
+  // Fog mouse handlers
+  mapArea.addEventListener('mousedown', (e) => {
+    if (mode !== 'fog-erase' && mode !== 'fog-paint') return;
+    fogPainting = true;
+    const rect = mapArea.getBoundingClientRect();
+    const ix = (e.clientX - rect.left - offsetX) / scale;
+    const iy = (e.clientY - rect.top  - offsetY) / scale;
+    fogPaint(ix, iy, mode === 'fog-erase');
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!fogPainting) return;
+    const rect = mapArea.getBoundingClientRect();
+    const ix = (e.clientX - rect.left - offsetX) / scale;
+    const iy = (e.clientY - rect.top  - offsetY) / scale;
+    fogPaint(ix, iy, mode === 'fog-erase');
+  });
+  window.addEventListener('mouseup', () => { fogPainting = false; });
+
+  // setMode: handle fog modes
+  const _origSetModeFog = setMode;
+  // Hook into existing setMode — add fog mode button handling inside the existing setMode function
+
