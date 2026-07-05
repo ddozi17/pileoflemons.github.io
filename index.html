@@ -772,6 +772,26 @@
     border: none; background: transparent; color: #c8aa70;
   }
   .export-eye.hidden-from-export { opacity: 0.25; color: #6a5a40; }
+  /* Layer groups */
+  .layer-group-header {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 2px 2px; margin-top: 4px;
+    border-top: 1px solid #2a2010;
+  }
+  .layer-group-header:first-child { border-top: none; margin-top: 0; }
+  .layer-group-collapse { font-size: 11px; cursor: pointer; color: #5a4a30; user-select: none; width: 14px; text-align: center; flex-shrink: 0; }
+  .layer-group-collapse:hover { color: #c8aa70; }
+  .layer-group-name-in {
+    flex: 1; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: #6a5a40; background: transparent; border: none; outline: none;
+    font-family: inherit; cursor: text; min-width: 0; padding: 0;
+  }
+  .layer-group-name-in:focus { color: #c8b898; }
+  .layer-group-vis { font-size: 13px; cursor: pointer; color: #c8aa70; background: transparent; border: none; padding: 0 2px; flex-shrink: 0; }
+  .layer-group-vis.hidden { opacity: 0.3; color: #5a4a30; }
+  .layer-group-del { font-size: 11px; color: #5a3a2a; cursor: pointer; padding: 0 3px; background: transparent; border: none; flex-shrink: 0; }
+  .layer-group-del:hover { color: #c87060; }
+  .layer-row-grouped { padding-left: 12px; border-left: 2px solid #2a2010; margin-left: 6px; }
   .export-eye-label {
     font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
     color: #5a4a30; white-space: nowrap;
@@ -1027,7 +1047,10 @@
     <div id="layers-dropdown" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:#1e1810;border:1px solid #5a4a2a;border-radius:5px;padding:10px;z-index:400;box-shadow:0 6px 24px #000a;min-width:200px;max-height:320px;overflow-y:auto;">
       <div id="layers-list" style="display:flex;flex-direction:column;gap:6px;"></div>
       <div style="border-top:1px solid #3a2c1a;margin-top:8px;padding-top:8px;">
-        <button id="layers-add" style="width:100%;font-size:12px;">+ Add Layer</button>
+        <div style="display:flex;gap:4px;margin-top:4px;">
+        <button id="layers-add" style="flex:1;font-size:12px;">+ Add Layer</button>
+        <button id="layers-add-group" style="flex:1;font-size:12px;background:#1a1510;">📁 Folder</button>
+      </div>
       </div>
     </div>
   </div>
@@ -1489,7 +1512,8 @@
   let isPanning = false;
   let panStart = null;
   let mapLoaded = false;
-  let layers = []; // {name, src, visible}
+  let layers = []; // {name, src, visible, exportHidden, group} — group is a layerGroup id or null
+  let layerGroups = []; // {id, name, visible, collapsed}
 
   // ── Multi-map state ──────────────────────────────────────────────────────────
   let maps       = []; // [{id, name, layers, pins, links, drawings, regions, fogDataURL, snapshots}]
@@ -1504,7 +1528,7 @@
     // Capture current working state into an object
     let fogDU = null;
     try { if (fogInitialised) fogDU = fogCanvas.toDataURL(); } catch(e) {}
-    return { layers: layers.map(l => ({...l})), pins: JSON.parse(JSON.stringify(pins)),
+    return { layers: layers.map(l => ({...l})), layerGroups: JSON.parse(JSON.stringify(layerGroups)), pins: JSON.parse(JSON.stringify(pins)),
       links: JSON.parse(JSON.stringify(links)), drawings: JSON.parse(JSON.stringify(drawings)),
       regions: JSON.parse(JSON.stringify(regions)), fogDataURL: fogDU,
       snapshots: JSON.parse(JSON.stringify(snapshots)) };
@@ -1515,14 +1539,15 @@
     const m = maps.find(m => m.id === activeMapId);
     if (!m) return;
     const s = currentMapState();
-    m.layers = s.layers; m.pins = s.pins; m.links = s.links;
+    m.layers = s.layers; m.layerGroups = s.layerGroups || []; m.pins = s.pins; m.links = s.links;
     m.drawings = s.drawings; m.regions = s.regions;
     m.fogDataURL = s.fogDataURL; m.snapshots = s.snapshots;
   }
 
   function loadMap(mapObj) {
     activeMapId = mapObj.id;
-    layers    = (mapObj.layers   || []).map(l => ({...l}));
+    layers      = (mapObj.layers      || []).map(l => ({...l}));
+    layerGroups = JSON.parse(JSON.stringify(mapObj.layerGroups || []));
     pins      = JSON.parse(JSON.stringify(mapObj.pins      || []));
     links     = JSON.parse(JSON.stringify(mapObj.links     || []));
     drawings  = JSON.parse(JSON.stringify(mapObj.drawings  || []));
@@ -2409,7 +2434,9 @@
       img.className = 'map-layer';
       img.draggable = false;
       img.style.zIndex = i;
-      img.style.display = layer.visible ? 'block' : 'none';
+      const lgrp = layer.group ? layerGroups.find(g => g.id === layer.group) : null;
+      const effectiveVisible = layer.visible && (lgrp ? lgrp.visible : true);
+      img.style.display = effectiveVisible ? 'block' : 'none';
       if (i === 0) {
         mapImg = img;
         img.onload = () => {
@@ -2492,11 +2519,12 @@
     if (proj.title) document.getElementById('title-text').textContent = '◆ ' + proj.title;
     Object.keys(PIN_COLORS).forEach(k => delete PIN_COLORS[k]);
     Object.assign(PIN_COLORS, proj.categories || {});
-    layers = proj.layers.map(l => ({ name: l.name, src: l.src, visible: l.visible, exportHidden: l.exportHidden || false }));
+    layers = proj.layers.map(l => ({ name: l.name, src: l.src, visible: l.visible, exportHidden: l.exportHidden || false, group: l.group || null }));
     links = proj.links || [];
     drawings = proj.drawings || [];
     regions   = proj.regions   || [];
-    templates = proj.templates || [];
+    templates   = proj.templates || [];
+    layerGroups = proj.layerGroups || [];
     snapshots = proj.snapshots || [];
     tourStops = proj.tourStops || [];
     if (proj.fogDataURL) {
@@ -2521,87 +2549,157 @@
   function renderLayerList() {
     const list = document.getElementById('layers-list');
     list.innerHTML = '';
-    // Show topmost layer first in the list, matching visual stacking order.
-    for (let i = layers.length - 1; i >= 0; i--) {
-      const layer = layers[i];
+
+    // Build display order: reverse of layers array (topmost first)
+    // Group headers appear before their layers
+    const displayed = new Set();
+
+    function makeLayerRow(layer, i) {
+      const grouped = !!layer.group;
+      const grp = grouped ? layerGroups.find(g => g.id === layer.group) : null;
+      // If group is collapsed, skip rendering this row
+      if (grp && grp.collapsed) return;
+
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+      row.style.cssText = 'display:flex;align-items:center;gap:5px;';
+      if (grouped) row.classList.add('layer-row-grouped');
 
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = layer.visible;
       cb.title = 'Show/hide this layer';
       cb.style.cssText = 'accent-color:#c8aa70;cursor:pointer;flex-shrink:0;';
-      cb.addEventListener('change', () => {
-        layer.visible = cb.checked;
-        renderLayerImages();
-      });
+      cb.addEventListener('change', () => { layer.visible = cb.checked; renderLayerImages(); });
 
       const name = document.createElement('input');
-      name.type = 'text';
-      name.value = layer.name;
-      name.title = 'Edit layer name';
-      name.style.cssText = 'flex:1;font-size:13px;letter-spacing:0.03em;background:#15110c;color:#e8dfc8;border:1px solid #3a2c1a;border-radius:3px;padding:3px 6px;min-width:0;';
-      name.addEventListener('change', () => {
-        layer.name = name.value.trim() || layer.name;
-        name.value = layer.name;
+      name.type = 'text'; name.value = layer.name; name.title = 'Edit layer name';
+      name.style.cssText = 'flex:1;font-size:12px;background:#15110c;color:#e8dfc8;border:1px solid #3a2c1a;border-radius:3px;padding:2px 5px;min-width:0;';
+      name.addEventListener('change', () => { layer.name = name.value.trim() || layer.name; name.value = layer.name; });
+      name.addEventListener('keydown', (e) => { if (e.key === 'Enter') name.blur(); });
+
+      // Folder picker — assign/unassign layer to a group
+      const grpSel = document.createElement('select');
+      grpSel.title = 'Assign to folder';
+      grpSel.style.cssText = 'background:#15110c;border:1px solid #3a2c1a;border-radius:3px;color:#8a7a60;font-family:inherit;font-size:10px;padding:2px 3px;outline:none;max-width:70px;flex-shrink:0;';
+      const noneOpt = document.createElement('option'); noneOpt.value = ''; noneOpt.textContent = '— none';
+      grpSel.appendChild(noneOpt);
+      layerGroups.forEach(g => {
+        const o = document.createElement('option'); o.value = g.id; o.textContent = g.name;
+        if (layer.group === g.id) o.selected = true;
+        grpSel.appendChild(o);
       });
-      name.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') name.blur();
+      grpSel.addEventListener('change', () => {
+        layer.group = grpSel.value || null;
+        renderLayerList();
       });
+      // Only show folder picker if there are groups
+      if (!layerGroups.length) grpSel.style.display = 'none';
 
       const moveUp = document.createElement('button');
-      moveUp.textContent = '\u25B2';
-      moveUp.title = 'Move up (in front)';
-      moveUp.style.cssText = 'padding:2px 6px;font-size:10px;flex-shrink:0;';
+      moveUp.textContent = '▲'; moveUp.title = 'Move up';
+      moveUp.style.cssText = 'padding:1px 5px;font-size:9px;flex-shrink:0;';
       moveUp.disabled = i === layers.length - 1;
       moveUp.addEventListener('click', () => {
-        [layers[i], layers[i + 1]] = [layers[i + 1], layers[i]];
-        renderLayerImages();
-        renderLayerList();
+        snapshot(); [layers[i], layers[i+1]] = [layers[i+1], layers[i]];
+        renderLayerImages(); renderLayerList();
       });
 
       const moveDown = document.createElement('button');
-      moveDown.textContent = '\u25BC';
-      moveDown.title = 'Move down (behind)';
-      moveDown.style.cssText = 'padding:2px 6px;font-size:10px;flex-shrink:0;';
+      moveDown.textContent = '▼'; moveDown.title = 'Move down';
+      moveDown.style.cssText = 'padding:1px 5px;font-size:9px;flex-shrink:0;';
       moveDown.disabled = i === 0;
       moveDown.addEventListener('click', () => {
-        [layers[i], layers[i - 1]] = [layers[i - 1], layers[i]];
-        renderLayerImages();
-        renderLayerList();
+        snapshot(); [layers[i], layers[i-1]] = [layers[i-1], layers[i]];
+        renderLayerImages(); renderLayerList();
       });
 
-      // Export visibility eye
       const eyeL = document.createElement('button');
       eyeL.className = 'export-eye' + (layer.exportHidden ? ' hidden-from-export' : '');
-      eyeL.textContent = '◉';
-      eyeL.title = layer.exportHidden ? 'Hidden from exports — click to include' : 'Included in exports — click to hide';
+      eyeL.textContent = '◉'; eyeL.title = layer.exportHidden ? 'Hidden from export' : 'Included in export';
       eyeL.addEventListener('click', () => {
         layer.exportHidden = !layer.exportHidden;
         eyeL.classList.toggle('hidden-from-export', layer.exportHidden);
-        eyeL.title = layer.exportHidden ? 'Hidden from exports — click to include' : 'Included in exports — click to hide';
+        eyeL.title = layer.exportHidden ? 'Hidden from export' : 'Included in export';
       });
 
-      row.append(cb, name, eyeL, moveUp, moveDown);
+      const del = document.createElement('button');
+      del.textContent = '✕'; del.title = 'Delete layer';
+      del.style.cssText = 'background:transparent;border:1px solid #6a3a2a;color:#c87060;padding:1px 5px;border-radius:3px;cursor:pointer;font-size:10px;flex-shrink:0;';
+      del.addEventListener('click', () => {
+        if (layers.length <= 1) { alert('Cannot delete the only layer.'); return; }
+        if (!confirm(`Delete layer "${layer.name}"?`)) return;
+        snapshot(); layers.splice(i, 1); renderLayerImages(); renderLayerList();
+      });
 
-      if (layers.length > 1) {
-        const del = document.createElement('button');
-        del.textContent = '✕';
-        del.title = 'Delete layer';
-        del.style.cssText = 'background:transparent;border:1px solid #6a3a2a;color:#c87060;padding:2px 7px;border-radius:3px;cursor:pointer;font-size:11px;flex-shrink:0;';
-        del.addEventListener('click', () => {
-          if (!confirm(`Delete layer "${layer.name}"?`)) return;
-          snapshot();
-          layers.splice(i, 1);
-          renderLayerImages();
-          renderLayerList();
-        });
-        row.appendChild(del);
-      }
-
+      row.append(cb, name, grpSel, eyeL, moveUp, moveDown, del);
       list.appendChild(row);
     }
+
+    function makeGroupHeader(grp) {
+      const hdr = document.createElement('div');
+      hdr.className = 'layer-group-header';
+
+      const collapse = document.createElement('span');
+      collapse.className = 'layer-group-collapse';
+      collapse.textContent = grp.collapsed ? '▶' : '▼';
+      collapse.title = grp.collapsed ? 'Expand' : 'Collapse';
+      collapse.addEventListener('click', () => {
+        grp.collapsed = !grp.collapsed; renderLayerList();
+      });
+
+      const nameIn = document.createElement('input');
+      nameIn.type = 'text'; nameIn.className = 'layer-group-name-in';
+      nameIn.value = grp.name;
+      nameIn.addEventListener('change', () => { grp.name = nameIn.value.trim() || grp.name; nameIn.value = grp.name; });
+      nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameIn.blur(); });
+
+      // Count layers in group
+      const count = layers.filter(l => l.group === grp.id).length;
+      const countEl = document.createElement('span');
+      countEl.style.cssText = 'font-size:9px;color:#3a2c1a;flex-shrink:0;';
+      countEl.textContent = count ? `${count}` : '';
+
+      const vis = document.createElement('button');
+      vis.className = 'layer-group-vis' + (grp.visible ? '' : ' hidden');
+      vis.textContent = '◉'; vis.title = grp.visible ? 'Hide all in folder' : 'Show all in folder';
+      vis.addEventListener('click', () => {
+        grp.visible = !grp.visible;
+        // Toggle all layers in this group
+        layers.filter(l => l.group === grp.id).forEach(l => { l.visible = grp.visible; });
+        vis.classList.toggle('hidden', !grp.visible);
+        vis.title = grp.visible ? 'Hide all in folder' : 'Show all in folder';
+        renderLayerImages(); renderLayerList();
+      });
+
+      const del = document.createElement('button');
+      del.className = 'layer-group-del'; del.textContent = '✕'; del.title = 'Delete folder (layers kept, unassigned)';
+      del.addEventListener('click', () => {
+        if (!confirm(`Delete folder "${grp.name}"? Layers inside will be unassigned.`)) return;
+        layers.filter(l => l.group === grp.id).forEach(l => { l.group = null; });
+        layerGroups = layerGroups.filter(g => g.id !== grp.id);
+        renderLayerList();
+      });
+
+      hdr.append(collapse, nameIn, countEl, vis, del);
+      list.appendChild(hdr);
+    }
+
+    // Render: ungrouped layers first, then groups
+    // Display is reversed (topmost layer first)
+    const reversed = [...layers.map((l, i) => ({l, i}))].reverse();
+
+    // Ungrouped layers (no group or group not found)
+    reversed.forEach(({l, i}) => {
+      if (!l.group || !layerGroups.find(g => g.id === l.group)) makeLayerRow(l, i);
+    });
+
+    // Group folders
+    layerGroups.forEach(grp => {
+      makeGroupHeader(grp);
+      reversed.forEach(({l, i}) => {
+        if (l.group === grp.id) makeLayerRow(l, i);
+      });
+    });
   }
 
   const layersBtn = document.getElementById('btn-layers');
@@ -2615,6 +2713,13 @@
   });
 
   const fileInputLayer = document.getElementById('file-input-layer');
+  document.getElementById('layers-add-group').addEventListener('click', () => {
+    const name = prompt('Folder name:', 'Folder');
+    if (!name) return;
+    layerGroups.push({ id: 'grp_' + Date.now(), name: name.trim(), visible: true, collapsed: false });
+    renderLayerList();
+  });
+
   document.getElementById('layers-add').addEventListener('click', () => {
     if (!mapLoaded) { alert('Load a base map image first.'); return; }
     fileInputLayer.click();
@@ -2728,8 +2833,8 @@
 
     Promise.all(layers.map(l => imageToDataURL(l.src)))
       .then(dataUrls => {
-        const layersData = layers.map((l, i) => ({ name: l.name, src: dataUrls[i], visible: l.visible, exportHidden: l.exportHidden || false }));
-        const project = { version: 2.6, title: document.getElementById('title-text').textContent.replace('◆ ','').trim(), pins, links, drawings, regions, categories: PIN_COLORS, layers: layersData, exportHiddenCats: [...exportHiddenCats], exportHiddenTags: [...exportHiddenTags], templates };
+        const layersData = layers.map((l, i) => ({ name: l.name, src: dataUrls[i], visible: l.visible, exportHidden: l.exportHidden || false, group: l.group || null }));
+        const project = { version: 2.6, title: document.getElementById('title-text').textContent.replace('◆ ','').trim(), pins, links, drawings, regions, categories: PIN_COLORS, layers: layersData, layerGroups, exportHiddenCats: [...exportHiddenCats], exportHiddenTags: [...exportHiddenTags], templates };
         const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
