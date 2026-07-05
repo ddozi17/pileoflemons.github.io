@@ -3129,7 +3129,7 @@ Enter a label (blank to clear, "delete" to remove link):`);
       const fill = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       fill.setAttribute('d', d);
       fill.setAttribute('class', 'region-fill');
-      fill.style.pointerEvents = (mode === 'read' || mode === 'pin' || mode === 'region') ? 'visibleFill' : 'none';
+      fill.style.pointerEvents = (mode === 'read' || mode === 'region') ? 'visibleFill' : 'none';
       fill.setAttribute('fill', color);
       fill.setAttribute('stroke', color);
       fill.setAttribute('stroke-width', 1.5);
