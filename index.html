@@ -74,7 +74,48 @@
   .pin.moving { opacity: 0.7; cursor: grabbing !important; }
   #map-area.mode-read { cursor: help; }
   #map-area.mode-link { cursor: crosshair; }
-  #map-area.mode-draw { cursor: crosshair; }
+  #map-area.mode-draw          { cursor: crosshair; }
+  #map-area.mode-stamp         { cursor: cell; }
+  #map-area.mode-stamp-scatter { cursor: crosshair; }
+
+  /* Stamp toolbar */
+  #stamp-toolbar {
+    display: none; position: fixed; bottom: 54px; left: 50%;
+    transform: translateX(-50%); background: #1e1810ee;
+    border: 1px solid #5a4a2a; border-radius: 6px;
+    padding: 8px 14px; z-index: 155; gap: 10px; align-items: center;
+    box-shadow: 0 4px 20px #000a; flex-wrap: wrap; max-width: 680px;
+    justify-content: center;
+  }
+  #stamp-toolbar.visible { display: flex; }
+  #stamp-toolbar label { font-size: 10px; color: #6a5a40; display: flex; align-items: center; gap: 5px; }
+  #stamp-toolbar input[type=range] { width: 70px; accent-color: #c8aa70; }
+  .stamp-shape-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 9px;
+    color: #6a5a40; border: 1px solid transparent; background: transparent;
+    letter-spacing: .04em; text-transform: uppercase; font-family: inherit;
+    transition: all 0.1s;
+  }
+  .stamp-shape-btn:hover { background: #2a2010; color: #c8b898; border-color: #3a2c1a; }
+  .stamp-shape-btn.active { background: #2a2010; color: #c8aa70; border-color: #8a6a3a; }
+  .stamp-shape-btn svg { display: block; }
+  #stamp-fill-btn {
+    font-size: 11px; padding: 4px 10px; background: #1a2010;
+    border-color: #3a5a3a; color: #8ab888;
+  }
+  #stamp-fill-btn:hover { background: #223020; color: #a8d8a8; }
+  .stamp-sep { width: 1px; background: #3a2c1a; height: 32px; flex-shrink: 0; }
+
+  /* Stamp SVG overlay */
+  #stamp-overlay { position: absolute; top:0; left:0; overflow:visible; pointer-events:none; z-index:6; }
+
+  /* Scatter brush preview circle */
+  #scatter-brush-preview {
+    position: absolute; border: 1px dashed #c8aa7066; border-radius: 50%;
+    pointer-events: none; z-index: 155; display: none;
+    transform: translate(-50%, -50%);
+  }
   #map-area.mode-measure { cursor: crosshair; }
   #map-area.mode-region    { cursor: crosshair; }
   #map-area.mode-fog-paint  { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='none' stroke='%23c8aa70' stroke-width='2'/%3E%3C/svg%3E") 16 16, crosshair; }
@@ -1051,6 +1092,7 @@
         <button id="layers-add" style="flex:1;font-size:12px;">+ Add Layer</button>
         <button id="layers-add-group" style="flex:1;font-size:12px;background:#1a1510;">📁 Folder</button>
       </div>
+      <button id="layers-import-folder" style="width:100%;font-size:12px;margin-top:4px;background:#1a1208;border-color:#3a4a2a;color:#8ab888;" title="Pick a folder — subfolders become layer groups">⬆ Import Folder…</button>
       </div>
     </div>
   </div>
@@ -1088,6 +1130,7 @@
   <button id="btn-mode-region" title="Click points to draw a region polygon, double-click to close">&#9651; Region</button>
   <div class="toolbar-sep"></div>
   <button id="btn-mode-draw" title="Draw a freehand shape on the map">&#9999; Draw</button>
+  <button id="btn-mode-stamp" title="Stamp map symbols — mountains, trees, forests and more">&#10022; Stamp</button>
   <div id="draw-color-bar">
     <span style="font-size:11px;color:#7a6a50;">Width:</span>
     <input type="range" id="draw-width-slider" min="1" max="20" value="3" title="Stroke width">
@@ -1140,6 +1183,7 @@
     <svg id="link-overlay" width="0" height="0"></svg>
     <div id="select-box"></div>
     <canvas id="fog-canvas"></canvas>
+    <svg id="stamp-overlay" width="0" height="0"></svg>
     <svg id="region-overlay" width="0" height="0" style="position:absolute;top:0;left:0;overflow:visible;pointer-events:none;z-index:7;"></svg>
     <svg id="measure-overlay" width="0" height="0"></svg>
     <svg id="grid-overlay" width="0" height="0"></svg>
@@ -1254,6 +1298,7 @@
 
 <input type="file" id="file-input-img" accept="image/*,.json" multiple style="display:none">
 <input type="file" id="file-input-layer" accept="image/*" multiple style="display:none">
+<input type="file" id="file-input-folder" accept="image/*" multiple webkitdirectory style="display:none">
 <input type="file" id="file-input-pins" accept=".json" multiple style="display:none">
 <input type="file" id="file-input-project" accept=".json" style="display:none">
 <div id="grid-settings" style="display:none;position:fixed;bottom:18px;right:18px;background:#221c14ee;border:1px solid #5a4a2a;border-radius:5px;padding:12px 16px;z-index:150;font-size:12px;color:#c8aa70;flex-direction:column;gap:10px;min-width:220px;">
@@ -1284,6 +1329,31 @@
     <span id="grid-opacity-label" style="min-width:32px;text-align:right;">30%</span>
   </label>
 </div>
+
+<div id="stamp-toolbar">
+  <!-- Shape picker populated by JS -->
+  <div id="stamp-shape-row" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"></div>
+  <div class="stamp-sep"></div>
+  <label>Size <input type="range" id="stamp-size" min="10" max="160" value="40"></label>
+  <label>Opacity <input type="range" id="stamp-opacity" min="10" max="100" value="85"></label>
+  <label>Rotate <input type="range" id="stamp-rotate" min="0" max="360" value="0"></label>
+  <div class="stamp-sep"></div>
+  <label style="flex-direction:column;gap:2px;">
+    <span>Mode</span>
+    <select id="stamp-mode-sel" style="background:#1a1510;border:1px solid #4a3a22;border-radius:3px;color:#c8b898;font-family:inherit;font-size:11px;padding:3px 6px;outline:none;">
+      <option value="single">Single click</option>
+      <option value="scatter">Scatter brush</option>
+    </select>
+  </label>
+  <label id="stamp-density-label">Density <input type="range" id="stamp-density" min="1" max="20" value="6"></label>
+  <label id="stamp-brush-label">Brush <input type="range" id="stamp-brush-r" min="5" max="300" value="80" style="width:110px;"></label>
+  <div class="stamp-sep"></div>
+  <button id="stamp-fill-btn" title="Fill selected region with stamps">⬛ Fill Region</button>
+  <button id="stamp-clear-btn" title="Clear all stamps" style="font-size:11px;padding:4px 10px;color:#6a5a40;border-color:#3a2c1a;">Clear All</button>
+</div>
+
+<div id="scatter-brush-preview"></div>
+
 <div id="realign-status"></div>
 <div id="minimap"><canvas id="minimap-canvas" width="160" height="100"></canvas><div id="minimap-viewport"></div></div>
 
@@ -1528,7 +1598,7 @@
     // Capture current working state into an object
     let fogDU = null;
     try { if (fogInitialised) fogDU = fogCanvas.toDataURL(); } catch(e) {}
-    return { layers: layers.map(l => ({...l})), layerGroups: JSON.parse(JSON.stringify(layerGroups)), pins: JSON.parse(JSON.stringify(pins)),
+    return { layers: layers.map(l => ({...l})), layerGroups: JSON.parse(JSON.stringify(layerGroups)), stamps: JSON.parse(JSON.stringify(stamps)), pins: JSON.parse(JSON.stringify(pins)),
       links: JSON.parse(JSON.stringify(links)), drawings: JSON.parse(JSON.stringify(drawings)),
       regions: JSON.parse(JSON.stringify(regions)), fogDataURL: fogDU,
       snapshots: JSON.parse(JSON.stringify(snapshots)) };
@@ -1539,7 +1609,7 @@
     const m = maps.find(m => m.id === activeMapId);
     if (!m) return;
     const s = currentMapState();
-    m.layers = s.layers; m.layerGroups = s.layerGroups || []; m.pins = s.pins; m.links = s.links;
+    m.layers = s.layers; m.layerGroups = s.layerGroups || []; m.stamps = s.stamps || []; m.pins = s.pins; m.links = s.links;
     m.drawings = s.drawings; m.regions = s.regions;
     m.fogDataURL = s.fogDataURL; m.snapshots = s.snapshots;
   }
@@ -1548,6 +1618,7 @@
     activeMapId = mapObj.id;
     layers      = (mapObj.layers      || []).map(l => ({...l}));
     layerGroups = JSON.parse(JSON.stringify(mapObj.layerGroups || []));
+    stamps      = JSON.parse(JSON.stringify(mapObj.stamps      || []));
     pins      = JSON.parse(JSON.stringify(mapObj.pins      || []));
     links     = JSON.parse(JSON.stringify(mapObj.links     || []));
     drawings  = JSON.parse(JSON.stringify(mapObj.drawings  || []));
@@ -1670,6 +1741,7 @@
   const exportHiddenTags = new Set();
   // layers use layer.exportHidden = true|false (stored on the object)
   let drawings = []; // [{id, points, color, strokeWidth, name, type, desc, tags, image}]
+  let stamps   = []; // [{id, shape, x, y, size, rotation, opacity, color, color2}]
   let linkSrc = null; // pin selected as link source
   let selectedLinkId = null;
 
@@ -1809,6 +1881,11 @@
     const rShapeBar = document.getElementById('region-shape-bar');
     if (rShapeBar) rShapeBar.classList.toggle('visible', m === 'region');
     document.getElementById('btn-mode-draw').classList.toggle('active', m === 'draw');
+    document.getElementById('btn-mode-stamp').classList.toggle('active', m === 'stamp' || m === 'stamp-scatter');
+    const stampBar = document.getElementById('stamp-toolbar');
+    if (stampBar) stampBar.classList.toggle('visible', m === 'stamp' || m === 'stamp-scatter');
+    const scatterPrev = document.getElementById('scatter-brush-preview');
+    if (scatterPrev) scatterPrev.style.display = m === 'stamp-scatter' ? 'block' : 'none';
     document.getElementById('draw-color-bar').classList.toggle('visible', m === 'draw');
     if (m !== 'draw') cancelDraw();
     if (m !== 'read') closeReader();
@@ -1861,6 +1938,7 @@
     renderDrawings();
     if (typeof renderRegions === 'function') renderRegions();
     if (typeof renderGroupList === 'function') renderGroupList();
+    if (typeof renderStamps   === 'function') renderStamps();
     if (document.getElementById('tour-panel') && document.getElementById('tour-panel').classList.contains('visible')) {
       if (typeof renderTourPanel === 'function') renderTourPanel();
     }
@@ -2443,7 +2521,7 @@
           dropZone.classList.add('hidden');
           layerStack.style.width = img.naturalWidth + 'px';
           layerStack.style.height = img.naturalHeight + 'px';
-          if (!mapLoaded) { mapLoaded = true; fitMap(); renderPins(); }
+          if (!mapLoaded) { mapLoaded = true; fitMap(); renderPins(); renderStamps(); }
         };
       }
       img.src = layer.src;
@@ -2525,6 +2603,7 @@
     regions   = proj.regions   || [];
     templates   = proj.templates || [];
     layerGroups = proj.layerGroups || [];
+    stamps      = proj.stamps      || [];
     snapshots = proj.snapshots || [];
     tourStops = proj.tourStops || [];
     if (proj.fogDataURL) {
@@ -2712,7 +2791,69 @@
     if (!layersDropdown.contains(e.target) && e.target !== layersBtn) layersDropdown.style.display = 'none';
   });
 
-  const fileInputLayer = document.getElementById('file-input-layer');
+  const fileInputLayer  = document.getElementById('file-input-layer');
+  const fileInputFolder = document.getElementById('file-input-folder');
+
+  // ── Import Folder ────────────────────────────────────────────────────────
+  document.getElementById('layers-import-folder').addEventListener('click', () => {
+    fileInputFolder.click();
+  });
+
+  fileInputFolder.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files)
+      .filter(f => /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(f.name));
+    if (!files.length) return;
+
+    snapshot();
+
+    // Group files by their immediate parent folder (webkitRelativePath = "folder/sub/file.png")
+    // Root-level files (depth 1) are ungrouped.
+    // Files one level deep go into a named group matching their parent folder name.
+    // Files deeper than that also go into the top-level subfolder group.
+
+    const groupMap = {}; // folderName → layerGroup id
+
+    // Sort so that root files come first, then alphabetical by path
+    files.sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath));
+
+    files.forEach(f => {
+      const parts = f.webkitRelativePath.split('/');
+      // parts[0] = root folder name (the picked folder itself)
+      // parts[1] = subfolder name OR filename if at root level
+      // parts[2+] = deeper nesting (still goes under parts[1] group)
+
+      const isRoot = parts.length === 2; // root/filename.png
+      const subFolder = isRoot ? null : parts[1]; // root/subFolder/...
+
+      let groupId = null;
+      if (subFolder) {
+        if (!groupMap[subFolder]) {
+          // Create a new layer group for this subfolder
+          const newGrp = { id: 'grp_' + Date.now() + '_' + Object.keys(groupMap).length, name: subFolder, visible: true, collapsed: false };
+          layerGroups.push(newGrp);
+          groupMap[subFolder] = newGrp.id;
+        }
+        groupId = groupMap[subFolder];
+      }
+
+      const layerName = f.name.replace(/\.[^/.]+$/, '');
+      layers.push({ name: layerName, src: URL.createObjectURL(f), visible: true, exportHidden: false, group: groupId });
+    });
+
+    // If no base layer loaded yet, use the first root-level image as base
+    if (!mapLoaded) {
+      const firstRoot = files.find(f => f.webkitRelativePath.split('/').length === 2);
+      if (firstRoot) {
+        // renderLayerImages will pick up the first layer as the base
+        renderLayerImages();
+      }
+    } else {
+      renderLayerImages();
+    }
+    renderLayerList();
+    fileInputFolder.value = '';
+  });
+
   document.getElementById('layers-add-group').addEventListener('click', () => {
     const name = prompt('Folder name:', 'Folder');
     if (!name) return;
@@ -2834,7 +2975,7 @@
     Promise.all(layers.map(l => imageToDataURL(l.src)))
       .then(dataUrls => {
         const layersData = layers.map((l, i) => ({ name: l.name, src: dataUrls[i], visible: l.visible, exportHidden: l.exportHidden || false, group: l.group || null }));
-        const project = { version: 2.6, title: document.getElementById('title-text').textContent.replace('◆ ','').trim(), pins, links, drawings, regions, categories: PIN_COLORS, layers: layersData, layerGroups, exportHiddenCats: [...exportHiddenCats], exportHiddenTags: [...exportHiddenTags], templates };
+        const project = { version: 2.6, title: document.getElementById('title-text').textContent.replace('◆ ','').trim(), pins, links, drawings, regions, categories: PIN_COLORS, layers: layersData, layerGroups, stamps, exportHiddenCats: [...exportHiddenCats], exportHiddenTags: [...exportHiddenTags], templates };
         const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -5227,6 +5368,189 @@ Type "delete" to delete or "dup" to duplicate:`);
   // ── Description preview: support images ──────────────────────────────────
   // Already in renderDescMarkdown — just add img support
   // Patching the existing function is done in Step 6
+
+  // ── Stamp System ─────────────────────────────────────────────────────────────
+  const stampOverlay = document.getElementById('stamp-overlay');
+
+  const STAMP_SHAPES = {
+    mountain: { label: 'Mountain', svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.5},${s*.05} L${s*.05},${s*.95} L${s*.95},${s*.95}Z" fill="${c}"/><path d="M${s*.5},${s*.05} L${s*.3},${s*.45} L${s*.7},${s*.45}Z" fill="${c2}"/></g>` },
+    mountain2:{ label: 'Mountains', svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.33},${s*.15} L${s*.02},${s*.95} L${s*.65},${s*.95}Z" fill="${c}" opacity="0.85"/><path d="M${s*.65},${s*.08} L${s*.35},${s*.95} L${s*.98},${s*.95}Z" fill="${c}"/><path d="M${s*.65},${s*.08} L${s*.5},${s*.42} L${s*.8},${s*.42}Z" fill="${c2}"/><path d="M${s*.33},${s*.15} L${s*.2},${s*.44} L${s*.46},${s*.44}Z" fill="${c2}" opacity="0.7"/></g>` },
+    hill:     { label: 'Hill',     svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.02},${s*.95} Q${s*.25},${s*.25} ${s*.5},${s*.2} Q${s*.75},${s*.25} ${s*.98},${s*.95}Z" fill="${c}"/><path d="M${s*.35},${s*.42} Q${s*.5},${s*.2} ${s*.65},${s*.42}" stroke="${c2}" stroke-width="${s*.04}" fill="none" stroke-linecap="round"/></g>` },
+    hills:    { label: 'Hills',    svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.02},${s*.95} Q${s*.2},${s*.4} ${s*.42},${s*.35} Q${s*.62},${s*.4} ${s*.75},${s*.95}Z" fill="${c}" opacity="0.8"/><path d="M${s*.28},${s*.95} Q${s*.5},${s*.25} ${s*.72},${s*.25} Q${s*.88},${s*.3} ${s*.98},${s*.95}Z" fill="${c}"/></g>` },
+    tree:     { label: 'Tree',     svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.44}" y="${s*.6}" width="${s*.12}" height="${s*.38}" rx="${s*.03}" fill="${c2}"/><circle cx="${s*.5}" cy="${s*.38}" r="${s*.36}" fill="${c}"/><circle cx="${s*.5}" cy="${s*.28}" r="${s*.24}" fill="${c}" opacity="0.8"/></g>` },
+    pinetree: { label: 'Pine',     svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.46}" y="${s*.72}" width="${s*.08}" height="${s*.26}" fill="${c2}"/><path d="M${s*.5},${s*.04} L${s*.15},${s*.55} L${s*.85},${s*.55}Z" fill="${c}"/><path d="M${s*.5},${s*.28} L${s*.18},${s*.72} L${s*.82},${s*.72}Z" fill="${c}" opacity="0.9"/></g>` },
+    forest:   { label: 'Forest',   svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.18}" y="${s*.62}" width="${s*.08}" height="${s*.3}" fill="${c2}"/><rect x="${s*.46}" y="${s*.58}" width="${s*.08}" height="${s*.34}" fill="${c2}"/><rect x="${s*.74}" y="${s*.62}" width="${s*.08}" height="${s*.3}" fill="${c2}"/><circle cx="${s*.22}" cy="${s*.45}" r="${s*.24}" fill="${c}"/><circle cx="${s*.5}" cy="${s*.38}" r="${s*.28}" fill="${c}" opacity="0.9"/><circle cx="${s*.78}" cy="${s*.45}" r="${s*.24}" fill="${c}"/></g>` },
+    swamp:    { label: 'Swamp',    svg: (s,c,c2,o) => `<g opacity="${o}"><ellipse cx="${s*.5}" cy="${s*.78}" rx="${s*.45}" ry="${s*.18}" fill="${c}" opacity="0.5"/><path d="M${s*.25},${s*.72} Q${s*.3},${s*.3} ${s*.5},${s*.2} Q${s*.7},${s*.3} ${s*.75},${s*.72}" fill="${c}" opacity="0.8"/><path d="M${s*.15},${s*.6} Q${s*.2},${s*.4} ${s*.35},${s*.35}" stroke="${c2}" stroke-width="${s*.05}" fill="none"/><path d="M${s*.65},${s*.35} Q${s*.8},${s*.4} ${s*.85},${s*.6}" stroke="${c2}" stroke-width="${s*.05}" fill="none"/></g>` },
+    desert:   { label: 'Desert',   svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.02},${s*.95} Q${s*.15},${s*.5} ${s*.3},${s*.55} Q${s*.45},${s*.6} ${s*.5},${s*.4} Q${s*.55},${s*.6} ${s*.7},${s*.55} Q${s*.85},${s*.5} ${s*.98},${s*.95}Z" fill="${c}"/><ellipse cx="${s*.5}" cy="${s*.35}" rx="${s*.12}" ry="${s*.18}" fill="${c2}" opacity="0.6"/></g>` },
+    volcano:  { label: 'Volcano',  svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.5},${s*.05} L${s*.05},${s*.95} L${s*.95},${s*.95}Z" fill="${c}"/><path d="M${s*.38},${s*.38} L${s*.5},${s*.05} L${s*.62},${s*.38}Z" fill="${c2}" opacity="0.8"/><path d="M${s*.42},${s*.06} Q${s*.38},${s*.01} ${s*.44},${s*0}" stroke="${c2}" stroke-width="${s*.04}" fill="none"/></g>` },
+    cliff:    { label: 'Cliff',    svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.05}" y="${s*.05}" width="${s*.9}" height="${s*.55}" rx="${s*.04}" fill="${c}"/><path d="M${s*.05},${s*.6} L${s*.15},${s*.95} L${s*.85},${s*.95} L${s*.95},${s*.6}Z" fill="${c}" opacity="0.6"/><line x1="${s*.2}" y1="${s*.15}" x2="${s*.2}" y2="${s*.55}" stroke="${c2}" stroke-width="${s*.04}"/><line x1="${s*.5}" y1="${s*.1}" x2="${s*.5}" y2="${s*.55}" stroke="${c2}" stroke-width="${s*.04}"/><line x1="${s*.75}" y1="${s*.12}" x2="${s*.75}" y2="${s*.55}" stroke="${c2}" stroke-width="${s*.04}"/></g>` },
+    cave:     { label: 'Cave',     svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.1},${s*.95} Q${s*.1},${s*.3} ${s*.5},${s*.18} Q${s*.9},${s*.3} ${s*.9},${s*.95}Z" fill="${c}"/><path d="M${s*.28},${s*.95} Q${s*.28},${s*.52} ${s*.5},${s*.44} Q${s*.72},${s*.52} ${s*.72},${s*.95}Z" fill="${c2}" opacity="0.7"/></g>` },
+    ruins:    { label: 'Ruins',    svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.08}" y="${s*.45}" width="${s*.22}" height="${s*.48}" fill="${c}"/><rect x="${s*.38}" y="${s*.28}" width="${s*.24}" height="${s*.65}" fill="${c}"/><rect x="${s*.7}" y="${s*.38}" width="${s*.22}" height="${s*.55}" fill="${c}"/><rect x="${s*.08}" y="${s*.35}" width="${s*.22}" height="${s*.12}" fill="${c2}"/><rect x="${s*.38}" y="${s*.2}" width="${s*.24}" height="${s*.1}" fill="${c2}"/></g>` },
+    castle:   { label: 'Castle',   svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.15}" y="${s*.42}" width="${s*.7}" height="${s*.52}" fill="${c}"/><rect x="${s*.15}" y="${s*.28}" width="${s*.18}" height="${s*.18}" fill="${c}"/><rect x="${s*.67}" y="${s*.28}" width="${s*.18}" height="${s*.18}" fill="${c}"/><rect x="${s*.41}" y="${s*.2}" width="${s*.18}" height="${s*.25}" fill="${c}"/><rect x="${s*.4}" y="${s*.58}" width="${s*.2}" height="${s*.36}" fill="${c2}" opacity="0.6"/></g>` },
+    tower:    { label: 'Tower',    svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.33}" y="${s*.18}" width="${s*.34}" height="${s*.76}" fill="${c}"/><path d="M${s*.28},${s*.18} L${s*.5},${s*.04} L${s*.72},${s*.18}Z" fill="${c}"/><rect x="${s*.44}" y="${s*.45}" width="${s*.12}" height="${s*.18}" fill="${c2}" opacity="0.7"/></g>` },
+    village:  { label: 'Village',  svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.04},${s*.95} L${s*.04},${s*.52} L${s*.28},${s*.28} L${s*.52},${s*.52} L${s*.52},${s*.95}Z" fill="${c}" opacity="0.9"/><path d="M${s*.48},${s*.95} L${s*.48},${s*.45} L${s*.72},${s*.22} L${s*.96},${s*.45} L${s*.96},${s*.95}Z" fill="${c}"/></g>` },
+    shrine:   { label: 'Shrine',   svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.35}" y="${s*.55}" width="${s*.3}" height="${s*.38}" fill="${c}"/><path d="M${s*.25},${s*.55} L${s*.5},${s*.18} L${s*.75},${s*.55}Z" fill="${c}"/><path d="M${s*.14},${s*.55} L${s*.86},${s*.55}" stroke="${c2}" stroke-width="${s*.05}"/><rect x="${s*.44}" y="${s*.66}" width="${s*.12}" height="${s*.27}" fill="${c2}" opacity="0.7"/></g>` },
+    farmland: { label: 'Farm',     svg: (s,c,c2,o) => `<g opacity="${o}"><rect x="${s*.08}" y="${s*.08}" width="${s*.84}" height="${s*.84}" rx="${s*.04}" fill="${c}" opacity="0.3" stroke="${c}" stroke-width="${s*.04}"/><line x1="${s*.08}" y1="${s*.36}" x2="${s*.92}" y2="${s*.36}" stroke="${c}" stroke-width="${s*.04}"/><line x1="${s*.08}" y1="${s*.64}" x2="${s*.92}" y2="${s*.64}" stroke="${c}" stroke-width="${s*.04}"/><line x1="${s*.36}" y1="${s*.08}" x2="${s*.36}" y2="${s*.92}" stroke="${c}" stroke-width="${s*.04}"/><line x1="${s*.64}" y1="${s*.08}" x2="${s*.64}" y2="${s*.92}" stroke="${c}" stroke-width="${s*.04}"/><circle cx="${s*.5}" cy="${s*.5}" r="${s*.1}" fill="${c2}"/></g>` },
+    skull:    { label: 'Danger',   svg: (s,c,c2,o) => `<g opacity="${o}"><path d="M${s*.5},${s*.08} Q${s*.18},${s*.08} ${s*.18},${s*.45} Q${s*.18},${s*.62} ${s*.3},${s*.7} L${s*.3},${s*.82} L${s*.7},${s*.82} L${s*.7},${s*.7} Q${s*.82},${s*.62} ${s*.82},${s*.45} Q${s*.82},${s*.08} ${s*.5},${s*.08}Z" fill="${c}"/><circle cx="${s*.36}" cy="${s*.44}" r="${s*.1}" fill="${c2}"/><circle cx="${s*.64}" cy="${s*.44}" r="${s*.1}" fill="${c2}"/></g>` },
+    anchor:   { label: 'Port',     svg: (s,c,c2,o) => `<g opacity="${o}"><circle cx="${s*.5}" cy="${s*.22}" r="${s*.15}" fill="none" stroke="${c}" stroke-width="${s*.07}"/><line x1="${s*.5}" y1="${s*.37}" x2="${s*.5}" y2="${s*.88}" stroke="${c}" stroke-width="${s*.07}" stroke-linecap="round"/><path d="M${s*.2},${s*.65} Q${s*.5},${s*.92} ${s*.8},${s*.65}" stroke="${c}" stroke-width="${s*.07}" fill="none"/><line x1="${s*.28}" y1="${s*.22}" x2="${s*.72}" y2="${s*.22}" stroke="${c}" stroke-width="${s*.05}"/></g>` },
+  };
+
+  function renderStamps() {
+    stampOverlay.innerHTML = '';
+    const w = parseInt(layerStack.style.width) || 0;
+    const h = parseInt(layerStack.style.height) || 0;
+    stampOverlay.setAttribute('width', w);
+    stampOverlay.setAttribute('height', h);
+    stamps.forEach(st => {
+      const def = STAMP_SHAPES[st.shape];
+      if (!def) return;
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('transform', `translate(${st.x - st.size/2},${st.y - st.size/2}) rotate(${st.rotation||0},${st.size/2},${st.size/2})`);
+      g.innerHTML = def.svg(st.size, st.color || '#5a7a4a', st.color2 || '#e8dfc8', (st.opacity||85)/100);
+      stampOverlay.appendChild(g);
+    });
+  }
+
+  let _stampShape = 'mountain', _stampSize = 40, _stampOpacity = 85;
+  let _stampRotate = 0, _stampDensity = 6, _stampBrushR = 80;
+  let _stampMode = 'single', _scatterPainting = false;
+
+  const STAMP_COLORS = {
+    mountain:'#8a7a6a', mountain2:'#8a7a6a', hill:'#7a8a5a', hills:'#7a8a5a',
+    tree:'#4a7a3a', pinetree:'#3a6a3a', forest:'#3a6a2a', swamp:'#5a7a4a',
+    desert:'#b8a060', volcano:'#9a4a2a', cliff:'#7a6a5a', cave:'#5a4a3a',
+    ruins:'#7a6a5a', castle:'#8a7a6a', tower:'#8a7a6a', village:'#c8a070',
+    shrine:'#b8905a', farmland:'#8aaa5a', skull:'#c87060', anchor:'#5a7a9a',
+  };
+  const STAMP_COLORS2 = {
+    mountain:'#e8dfc8', mountain2:'#e8dfc8', hill:'#c8b898', hills:'#c8b898',
+    tree:'#3a5a2a', pinetree:'#2a4a2a', forest:'#2a4a1a', swamp:'#3a5a3a',
+    desert:'#e8c060', volcano:'#e87040', cliff:'#a89880', cave:'#1a1208',
+    ruins:'#a89878', castle:'#c8b898', tower:'#c8b898', village:'#e8dfc8',
+    shrine:'#e8c070', farmland:'#a8c870', skull:'#e8dfc8', anchor:'#c8dce8',
+  };
+
+  function placeStamp(ix, iy, jitter) {
+    const jx = jitter ? (Math.random()-.5)*_stampSize*.4 : 0;
+    const jy = jitter ? (Math.random()-.5)*_stampSize*.4 : 0;
+    const sz = _stampSize * (jitter ? 1+(Math.random()-.5)*.3 : 1);
+    const rot = (_stampRotate===0 && jitter) ? Math.random()*360 : _stampRotate;
+    stamps.push({ id: Date.now()+Math.random(), shape: _stampShape,
+      x: ix+jx, y: iy+jy, size: sz, rotation: rot, opacity: _stampOpacity,
+      color: STAMP_COLORS[_stampShape]||'#7a6a5a', color2: STAMP_COLORS2[_stampShape]||'#c8b898' });
+  }
+
+  function pointInPolygon(x, y, pts) {
+    let inside = false;
+    for (let i=0, j=pts.length-1; i<pts.length; j=i++) {
+      const xi=pts[i].x, yi=pts[i].y, xj=pts[j].x, yj=pts[j].y;
+      if (((yi>y)!==(yj>y)) && (x<(xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside;
+    }
+    return inside;
+  }
+
+  function buildStampPicker() {
+    const row = document.getElementById('stamp-shape-row');
+    row.innerHTML = '';
+    const ps = 28;
+    Object.entries(STAMP_SHAPES).forEach(([key, def]) => {
+      const btn = document.createElement('button');
+      btn.className = 'stamp-shape-btn' + (key===_stampShape?' active':'');
+      btn.title = def.label;
+      btn.innerHTML = `<svg width="${ps}" height="${ps}" viewBox="0 0 ${ps} ${ps}">${def.svg(ps, STAMP_COLORS[key]||'#7a6a5a', STAMP_COLORS2[key]||'#c8b898', 1)}</svg><span>${def.label}</span>`;
+      btn.addEventListener('click', () => { _stampShape=key; buildStampPicker(); });
+      row.appendChild(btn);
+    });
+  }
+
+  document.getElementById('btn-mode-stamp').addEventListener('click', () => { setMode('stamp'); buildStampPicker(); });
+  document.getElementById('stamp-size').addEventListener('input',    e => { _stampSize=+e.target.value; });
+  document.getElementById('stamp-opacity').addEventListener('input',  e => { _stampOpacity=+e.target.value; });
+  document.getElementById('stamp-rotate').addEventListener('input',   e => { _stampRotate=+e.target.value; });
+  document.getElementById('stamp-density').addEventListener('input',  e => { _stampDensity=+e.target.value; });
+  document.getElementById('stamp-brush-r').addEventListener('input',  e => { _stampBrushR=+e.target.value; });
+  document.getElementById('stamp-mode-sel').addEventListener('change', e => {
+    _stampMode = e.target.value;
+    setMode(_stampMode==='scatter' ? 'stamp-scatter' : 'stamp');
+    const show = _stampMode==='scatter';
+    document.getElementById('stamp-density-label').style.display = show ? '' : 'none';
+    document.getElementById('stamp-brush-label').style.display   = show ? '' : 'none';
+    buildStampPicker();
+  });
+  document.getElementById('stamp-density-label').style.display = 'none';
+  document.getElementById('stamp-brush-label').style.display   = 'none';
+
+  document.getElementById('stamp-clear-btn').addEventListener('click', () => {
+    if (!stamps.length || !confirm('Clear all stamps?')) return;
+    snapshot(); stamps=[]; renderStamps();
+  });
+
+  document.getElementById('stamp-fill-btn').addEventListener('click', () => {
+    if (!regions.length) { alert('No regions yet — draw a region first, then use Fill Region.'); return; }
+    let reg = regions[regions.length-1];
+    if (regions.length > 1) {
+      const names = regions.map((r,i)=>`${i+1}. ${r.name||'(unnamed)'}`).join('\n');
+      const pick = prompt('Which region to fill? Enter number:\n'+names, regions.length);
+      const idx = parseInt(pick)-1;
+      if (isNaN(idx)||idx<0||idx>=regions.length) return;
+      reg = regions[idx];
+    }
+    if (!reg.points||reg.points.length<3) { alert('Region has no points.'); return; }
+    const xs=reg.points.map(p=>p.x), ys=reg.points.map(p=>p.y);
+    const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+    const spacing = Math.max(10, _stampSize*(1.8-_stampDensity*.06));
+    const added = [];
+    for (let x=minX+spacing/2; x<maxX; x+=spacing) {
+      for (let y=minY+spacing/2; y<maxY; y+=spacing) {
+        const jx=(Math.random()-.5)*spacing*.6, jy=(Math.random()-.5)*spacing*.6;
+        const px=x+jx, py=y+jy;
+        if (pointInPolygon(px, py, reg.points)) added.push({x:px,y:py});
+      }
+    }
+    if (!added.length) { alert('Region too small — try a smaller stamp size or denser spacing.'); return; }
+    snapshot();
+    added.forEach(pt => placeStamp(pt.x, pt.y, true));
+    renderStamps();
+  });
+
+  // Single stamp placement
+  mapArea.addEventListener('click', (e) => {
+    if (mode!=='stamp'||!mapLoaded) return;
+    if (e.target.closest('.pin')) return;
+    const rect = mapArea.getBoundingClientRect();
+    snapshot();
+    placeStamp((e.clientX-rect.left-offsetX)/scale, (e.clientY-rect.top-offsetY)/scale, false);
+    renderStamps();
+  });
+
+  // Scatter brush
+  const scatterPrev = document.getElementById('scatter-brush-preview');
+  mapArea.addEventListener('mousedown', (e) => {
+    if (mode!=='stamp-scatter'||!mapLoaded||e.button!==0) return;
+    _scatterPainting=true; snapshot(); scatterBrush(e);
+  });
+  mapArea.addEventListener('mousemove', (e) => {
+    if (mode!=='stamp-scatter') return;
+    const rect=mapArea.getBoundingClientRect();
+    const sr=_stampBrushR*scale;
+    scatterPrev.style.width=sr*2+'px'; scatterPrev.style.height=sr*2+'px';
+    scatterPrev.style.left=(e.clientX-rect.left)+'px'; scatterPrev.style.top=(e.clientY-rect.top)+'px';
+    if (_scatterPainting) scatterBrush(e);
+  });
+  window.addEventListener('mouseup', () => { if (_scatterPainting){_scatterPainting=false; renderStamps();} });
+
+  let _lastScatterTime=0;
+  function scatterBrush(e) {
+    const now=Date.now(); if (now-_lastScatterTime<80) return; _lastScatterTime=now;
+    const rect=mapArea.getBoundingClientRect();
+    const cx=(e.clientX-rect.left-offsetX)/scale, cy=(e.clientY-rect.top-offsetY)/scale;
+    const count=Math.max(1,Math.round(_stampDensity/4));
+    for (let i=0;i<count;i++) {
+      const a=Math.random()*Math.PI*2, r=Math.sqrt(Math.random())*_stampBrushR;
+      placeStamp(cx+Math.cos(a)*r, cy+Math.sin(a)*r, true);
+    }
+    renderStamps();
+  }
 
   // ── Global search ───────────────────────────────────────────────────────────
   document.getElementById('global-search').addEventListener('input', (e) => {
